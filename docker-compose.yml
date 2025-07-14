@@ -1,0 +1,92 @@
+---
+name: final-project # Docker 프로젝트 이름을 명시적으로 지정
+
+x-opensearch-common-env: &opensearch-common-env
+  cluster.name: opensearch-cluster
+  discovery.seed_hosts: opensearch-node1,opensearch-node2
+  cluster.initial_cluster_manager_nodes: opensearch-node1,opensearch-node2
+  # bootstrap.memory_lock: true  # along with the memlock settings below, disables swapping
+  OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m  # minimum and maximum Java heap size, recommend setting both to 50% of system RAM
+  OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_ADMIN_PASSWORD}
+
+x-opensearch-healthcheck: &opensearch-healthcheck
+  test: ["CMD-SHELL", "curl -k -u admin:${OPENSEARCH_ADMIN_PASSWORD} https://localhost:9200/_cluster/health?local=true | grep -E -q '\"status\":\"(green|yellow)\"'"]
+  interval: 10s
+  timeout: 5s
+  retries: 10
+
+x-opensearch-resources: &opensearch-resources
+  deploy:
+    resources:
+      limits:
+        memory: 1g # 컨테이너 메모리 사용량을 1GB로 제한 (Java 힙 메모리보다 커야 함)
+
+services:
+  opensearch-node1:
+    build: . # 현재 디렉토리의 Dockerfile을 사용하여 이미지 빌드
+    container_name: opensearch-node1
+    environment:
+      <<: *opensearch-common-env
+      node.name: opensearch-node1
+    <<: *opensearch-resources
+    # ulimits:
+    #   memlock:
+    #     soft: -1
+    #     hard: -1
+    #   nofile:
+    #     soft: 65536  # maximum number of open files for the OpenSearch user, set to at least 65536 on modern systems
+    #     hard: 65536
+    volumes:
+      - opensearch-data1:/usr/share/opensearch/data
+    ports:
+      - 9200:9200
+      - 9600:9600  # required for Performance Analyzer
+    healthcheck: *opensearch-healthcheck
+    networks:
+      - opensearch-net
+  opensearch-node2:
+    build: . # 현재 디렉토리의 Dockerfile을 사용하여 이미지 빌드
+    container_name: opensearch-node2
+    environment:
+      <<: *opensearch-common-env
+      node.name: opensearch-node2
+    <<: *opensearch-resources
+    # ulimits:
+    #   memlock:
+    #     soft: -1
+    #     hard: -1
+    #   nofile:
+    #     soft: 65536
+    #     hard: 65536
+    volumes:
+      - opensearch-data2:/usr/share/opensearch/data
+    ports:
+      - 9201:9200
+      - 9601:9600
+    healthcheck: *opensearch-healthcheck
+    networks:
+      - opensearch-net
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:3.1.0
+    container_name: opensearch-dashboards
+    ports:
+      - 5601:5601
+    environment:
+      OPENSEARCH_HOSTS: '["https://opensearch-node1:9200","https://opensearch-node2:9200"]'
+      OPENSEARCH_USERNAME: 'admin'
+      OPENSEARCH_PASSWORD: '${OPENSEARCH_ADMIN_PASSWORD}'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: 'false' # Corrected typo
+    networks:
+      - opensearch-net
+    depends_on:
+      opensearch-node1:
+        condition: service_healthy
+      opensearch-node2:
+        condition: service_healthy
+
+volumes:
+  opensearch-data1:
+  opensearch-data2:
+
+networks:
+  opensearch-net:

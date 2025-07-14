@@ -1,0 +1,10 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment files (should not be in the build context for security)
+.env*
