@@ -3,6 +3,7 @@ from sentence_transformers import SentenceTransformer
 from FlagEmbedding import FlagReranker
 from dotenv import load_dotenv
 import numpy as np
+from typing import List, Dict, Any, Union
 import logging
 import json
 import os
@@ -29,15 +30,15 @@ class OpenSearchClient:
             
             logging.info(f"OpenSearch 연결 시도 중... (비밀번호 길이: {len(password)})")
             
+            # 환경변수에서 호스트 정보 가져오기 (docker-compose 환경 지원)
+            host = os.getenv("OPENSEARCH_HOST", "localhost")
+            port = int(os.getenv("OPENSEARCH_PORT", "9200"))
+            
+            logging.info(f"OpenSearch 연결 대상: {host}:{port}")
+            
             self.client = OpenSearch(
-                # docker-compose.yml에 설정된 호스트 정보
-                hosts=[{"host": "localhost", "port": 9200}],
-                # .env 파일에서 불러온 비밀번호 사용
-                http_auth=("admin", password),
-                # 보안 플러그인이 활성화되어 있으므로 SSL/TLS 사용
-                use_ssl=True,
-                # 자체 서명된 인증서를 사용하므로 인증서 검증 비활성화
-                verify_certs=False,
+                hosts=[{"host": host, "port": port}],
+                # 보안이 비활성화되어 있으므로 인증 없이 연결
                 timeout=30, # 연결 타임아웃 설정
             )
             # 연결 확인
@@ -364,7 +365,7 @@ class OpenSearchClient:
             "query": {
                 "knn": {
                     "content_vector": {
-                        "vector": query_vector.tolist(),
+                        "vector": query_vector.tolist(),  # type: ignore
                         "k": 10
                     }
                 }

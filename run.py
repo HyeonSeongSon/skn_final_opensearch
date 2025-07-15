@@ -94,7 +94,7 @@ def main():
             if text:
                 # KURE-v1 모델로 임베딩 생성 (1024차원)
                 embedding = client.model.encode(text)
-                doc["content_vector"] = embedding.tolist()
+                doc["content_vector"] = embedding.tolist()  # type: ignore
             
             # 출처 파일 정보 추가
             doc["출처파일"] = jsonl_file

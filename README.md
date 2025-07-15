@@ -8,6 +8,7 @@
 - [상세 설정](#상세-설정)
 - [접속 정보](#접속-정보)
 - [주요 명령어](#주요-명령어)
+- [FastAPI 서버](#fastapi-서버)
 - [트러블슈팅](#트러블슈팅)
 - [클러스터 구성](#클러스터-구성)
 
@@ -236,6 +237,75 @@ curl -k -u admin:password https://localhost:9200/_nodes?pretty
 # 인덱스 정보
 curl -k -u admin:password https://localhost:9200/_cat/indices?v
 ```
+
+## 🌐 FastAPI 서버
+
+OpenSearch 클러스터와 상호작용하는 REST API 서버도 제공됩니다.
+
+### 서버 설치 및 실행
+
+#### 1. Python 의존성 설치
+```powershell
+# 가상환경 생성 (권장)
+python -m venv venv
+venv\Scripts\activate
+
+# 패키지 설치
+pip install -r requirements.txt
+```
+
+#### 2. FastAPI 서버 실행
+```powershell
+# 개발 모드
+python main.py
+
+# 또는 uvicorn 직접 실행
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### API 엔드포인트
+
+#### 기본 엔드포인트
+- `GET /` - 서버 상태 확인
+- `GET /health` - OpenSearch 연결 상태 확인
+- `GET /docs` - API 문서 (Swagger UI)
+
+#### 주요 API
+- `POST /search` - 하이브리드 검색 (BM25 + 벡터 + 리랭크)
+- `POST /documents` - 단일 문서 색인
+- `POST /documents/bulk` - 여러 문서 일괄 색인
+- `POST /index` - 인덱스 생성
+- `DELETE /index/{index_name}` - 인덱스 삭제
+- `POST /load-jsonl` - JSONL 파일 로드 및 색인
+
+### API 사용 예제
+
+#### 검색 API 호출
+```powershell
+# PowerShell 예제
+$searchData = @{
+    keywords = @("의료기기", "안전")
+    query_text = "의료기기 안전 관리 규정을 찾아주세요"
+    top_k = 5
+    use_rerank = $true
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8000/search" -Method Post -Body $searchData -ContentType "application/json"
+```
+
+#### Python 클라이언트 사용
+```powershell
+# 전체 기능 테스트
+python test_client.py
+
+# 대화형 검색 테스트
+python test_client.py interactive
+```
+
+### API 접속 정보
+- **서버 URL**: http://localhost:8000
+- **API 문서**: http://localhost:8000/docs
+- **대안 문서**: http://localhost:8000/redoc
 
 ---
 
