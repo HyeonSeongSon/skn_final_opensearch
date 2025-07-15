@@ -31,6 +31,7 @@ class SearchRequest(BaseModel):
     """검색 요청 모델"""
     keywords: List[str] = Field(..., description="검색 키워드 리스트")
     query_text: str = Field(..., description="검색 쿼리 텍스트")
+    index_name: str = Field(default="internal_regulations_index", description="검색할 인덱스명")
     top_k: int = Field(default=10, description="하이브리드 검색 결과 수", ge=1, le=50)
     bm25_weight: float = Field(default=0.3, description="BM25 가중치", ge=0.0, le=1.0)
     vector_weight: float = Field(default=0.7, description="벡터 가중치", ge=0.0, le=1.0)
@@ -122,6 +123,7 @@ async def root():
             "index_document": "POST /document/index - 단일 문서 색인 (index_document)",
             "load_documents": "POST /documents/load - 문서 로드 및 색인 (bulk_index_documents)",
             "index_stats": "GET /index/{index_name}/stats - 인덱스 통계",
+            "mapping_examples": "GET /mapping/examples - 매핑 예제 조회 (인덱스 생성 시 참고)",
             "docs": "GET /docs - API 문서 (Swagger UI)"
         },
         "usage": {
@@ -191,6 +193,7 @@ async def search_documents(request: SearchRequest):
         final_results = opensearch_client.normalized_hybrid_search(
             keywords=request.keywords,
             query_text=request.query_text,
+            index_name=request.index_name,      # 검색할 인덱스명
             top_k=request.top_k,           # 하이브리드 검색으로 N개 추출
             bm25_weight=request.bm25_weight,    # BM25 가중치
             vector_weight=request.vector_weight,  # 벡터 가중치  
@@ -374,11 +377,41 @@ async def load_documents(request: DocumentLoadRequest):
         success = opensearch_client.bulk_index_documents(request.index_name, all_docs, refresh=True)
         
         if success:
+            # 색인 완료 후 상위 3개 문서 조회
+            logger.info("색인 완료 후 상위 3개 문서를 조회합니다...")
+            
+            # 상위 3개 문서 조회
+            sample_docs = []
+            for i, doc in enumerate(all_docs[:3], 1):
+                sample_doc = doc.copy()
+                
+                # 벡터값은 앞에 5개만 표시
+                if "content_vector" in sample_doc and isinstance(sample_doc["content_vector"], list):
+                    vector_preview = sample_doc["content_vector"][:5]
+                    sample_doc["content_vector"] = f"[{', '.join(map(str, vector_preview))}...] (총 {len(sample_doc['content_vector'])}차원)"
+                
+                # 문서내용은 100자로 제한
+                if "문서내용" in sample_doc:
+                    content = sample_doc["문서내용"]
+                    if len(content) > 100:
+                        sample_doc["문서내용"] = content[:100] + "..."
+                
+                sample_docs.append({
+                    "순번": i,
+                    "문서명": sample_doc.get("문서명", "N/A"),
+                    "장": sample_doc.get("장", "N/A"),
+                    "조": sample_doc.get("조", "N/A"),
+                    "문서내용": sample_doc.get("문서내용", "N/A"),
+                    "출처파일": sample_doc.get("출처파일", "N/A"),
+                    "content_vector": sample_doc.get("content_vector", "N/A")
+                })
+            
             return {
                 "success": True,
                 "message": f"{len(all_docs)}개 문서가 성공적으로 색인되었습니다.",
                 "indexed_documents": len(all_docs),
-                "jsonl_files": jsonl_files
+                "jsonl_files": jsonl_files,
+                "sample_documents": sample_docs
             }
         else:
             raise HTTPException(status_code=500, detail="문서 색인 실패")
@@ -406,6 +439,108 @@ async def get_index_stats(index_name: str):
     except Exception as e:
         logger.error(f"인덱스 통계 조회 오류: {e}")
         raise HTTPException(status_code=500, detail=f"인덱스 통계 조회 실패: {str(e)}")
+
+@app.get("/mapping/examples", summary="매핑 예제 조회")
+async def get_mapping_examples():
+    """
+    제약회사 문서 검색 시스템에 최적화된 매핑 예제들을 반환합니다.
+    인덱스 생성 시 참고할 수 있는 3가지 매핑 예제를 제공합니다.
+    """
+    vec_dim = 1024  # 벡터 차원 설정
+    
+    examples = {
+        "1": {
+            "name": "제약회사 문서 기본 매핑 (벡터 검색 없음)",
+            "description": "벡터 검색 없이 기본적인 텍스트 검색만 지원하는 매핑",
+            "mapping": {
+                "settings": {
+                    "index": {
+                        "knn": False  # k-NN 검색 비활성화
+                    }
+                },
+                "mappings": {
+                    "properties": {
+                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                        "장":      { "type": "text" },      # 전문 검색 가능
+                        "조":      { "type": "text" },      # 전문 검색 가능
+                        "문서내용":  { "type": "text" },      # 전문 검색 가능
+                        "출처파일":  { "type": "keyword" }    # 정확한 파일명 매칭
+                    }
+                }
+            }
+        },
+        "2": {
+            "name": "제약회사 문서 벡터 검색 지원 매핑 (권장)",
+            "description": "하이브리드 검색(BM25 + 벡터)을 지원하는 권장 매핑",
+            "mapping": {
+                "settings": {
+                    "index": {
+                        "knn": True  # k-NN 검색 활성화
+                    }
+                },
+                "mappings": {
+                    "properties": {
+                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                        "장":      { "type": "text" },      # 전문 검색 가능
+                        "조":      { "type": "text" },      # 전문 검색 가능
+                        "문서내용":  { "type": "text" },      # 전문 검색 가능
+                        "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
+                        "content_vector": {
+                            "type": "knn_vector",           # 벡터 유사도 검색용
+                            "dimension": vec_dim,
+                            "method": {
+                                "name": "hnsw",             # Hierarchical Navigable Small World
+                                "space_type": "cosinesimil", # 코사인 유사도 사용
+                                "engine": "lucene"          # 검색 엔진 (nmslib deprecated)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "3": {
+            "name": "제약회사 문서 완전 매핑 (추가 필드 포함)",
+            "description": "벡터 검색 + 추가 메타데이터 필드를 포함한 완전한 매핑",
+            "mapping": {
+                "settings": {
+                    "index": {
+                        "knn": True  # k-NN 검색 활성화
+                    }
+                },
+                "mappings": {
+                    "properties": {
+                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                        "장":      { "type": "text" },      # 전문 검색 가능
+                        "조":      { "type": "text" },      # 전문 검색 가능
+                        "문서내용":  { "type": "text" },      # 전문 검색 가능
+                        "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
+                        "카테고리":  { "type": "keyword" },   # 문서 분류
+                        "생성일시":  { "type": "date" },      # 문서 생성 일시
+                        "수정일시":  { "type": "date" },      # 문서 수정 일시
+                        "태그":     { "type": "keyword" },   # 문서 태그
+                        "content_vector": {
+                            "type": "knn_vector",           # 벡터 유사도 검색용
+                            "dimension": vec_dim,
+                            "method": {
+                                "name": "hnsw",             # Hierarchical Navigable Small World
+                                "space_type": "cosinesimil", # 코사인 유사도 사용
+                                "engine": "lucene"          # 검색 엔진 (nmslib deprecated)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    return {
+        "success": True,
+        "message": "매핑 예제들이 성공적으로 조회되었습니다.",
+        "vector_dimension": vec_dim,
+        "total_examples": len(examples),
+        "examples": examples,
+        "usage_tip": "인덱스 생성 시 'mapping' 필드에 이 예제들을 사용하세요. 2번 예제가 권장됩니다."
+    }
 
 if __name__ == "__main__":
     import uvicorn

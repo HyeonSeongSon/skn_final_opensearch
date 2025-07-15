@@ -133,6 +133,12 @@ class PharmSearchClient:
         print(f"📊 인덱스 통계 조회: {index_name}")
         return self._make_request("GET", f"/index/{index_name}/stats")
     
+    def get_mapping_examples_from_api(self) -> Dict:
+        """API에서 매핑 예제 조회"""
+        print("📋 매핑 예제 조회 중...")
+        print("💡 인덱스 생성 시 참고할 수 있는 예제들을 가져옵니다.")
+        return self._make_request("GET", "/mapping/examples")
+    
     def index_single_document(self, index_name: str, document: Dict, refresh: bool = False) -> Dict:
         """단일 문서 색인"""
         print(f"📝 단일 문서 색인 중: {index_name}")
@@ -190,39 +196,50 @@ def print_response(response: Dict, title: str = "응답"):
 
 def get_mapping_examples():
     """매핑 예제 제공"""
+    vec_dim = 1024  # 벡터 차원 설정
+    
     examples = {
         "1": {
-            "name": "기본 텍스트 매핑",
+            "name": "제약회사 문서 기본 매핑 (벡터 검색 없음)",
             "mapping": {
                 "settings": {
-                    "index": {"knn": False}
+                    "index": {
+                        "knn": False  # k-NN 검색 비활성화
+                    }
                 },
                 "mappings": {
                     "properties": {
-                        "title": {"type": "text"},
-                        "content": {"type": "text"},
-                        "category": {"type": "keyword"}
+                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                        "장":      { "type": "text" },      # 전문 검색 가능
+                        "조":      { "type": "text" },      # 전문 검색 가능
+                        "문서내용":  { "type": "text" },      # 전문 검색 가능
+                        "출처파일":  { "type": "keyword" }    # 정확한 파일명 매칭
                     }
                 }
             }
         },
         "2": {
-            "name": "벡터 검색 지원 매핑",
+            "name": "제약회사 문서 벡터 검색 지원 매핑 (권장)",
             "mapping": {
                 "settings": {
-                    "index": {"knn": True}
+                    "index": {
+                        "knn": True  # k-NN 검색 활성화
+                    }
                 },
                 "mappings": {
                     "properties": {
-                        "title": {"type": "text"},
-                        "content": {"type": "text"},
+                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                        "장":      { "type": "text" },      # 전문 검색 가능
+                        "조":      { "type": "text" },      # 전문 검색 가능
+                        "문서내용":  { "type": "text" },      # 전문 검색 가능
+                        "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
                         "content_vector": {
-                            "type": "knn_vector",
-                            "dimension": 1024,
+                            "type": "knn_vector",           # 벡터 유사도 검색용
+                            "dimension": vec_dim,
                             "method": {
-                                "name": "hnsw",
-                                "space_type": "cosinesimil",
-                                "engine": "lucene"
+                                "name": "hnsw",             # Hierarchical Navigable Small World
+                                "space_type": "cosinesimil", # 코사인 유사도 사용
+                                "engine": "lucene"          # 검색 엔진 (nmslib deprecated)
                             }
                         }
                     }
@@ -230,17 +247,33 @@ def get_mapping_examples():
             }
         },
         "3": {
-            "name": "다중 언어 매핑",
+            "name": "제약회사 문서 완전 매핑 (추가 필드 포함)",
             "mapping": {
                 "settings": {
-                    "index": {"knn": False}
+                    "index": {
+                        "knn": True  # k-NN 검색 활성화
+                    }
                 },
                 "mappings": {
                     "properties": {
-                        "title_ko": {"type": "text", "analyzer": "standard"},
-                        "title_en": {"type": "text", "analyzer": "english"},
-                        "content": {"type": "text"},
-                        "date": {"type": "date"}
+                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                        "장":      { "type": "text" },      # 전문 검색 가능
+                        "조":      { "type": "text" },      # 전문 검색 가능
+                        "문서내용":  { "type": "text" },      # 전문 검색 가능
+                        "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
+                        "카테고리":  { "type": "keyword" },   # 문서 분류
+                        "생성일시":  { "type": "date" },      # 문서 생성 일시
+                        "수정일시":  { "type": "date" },      # 문서 수정 일시
+                        "태그":     { "type": "keyword" },   # 문서 태그
+                        "content_vector": {
+                            "type": "knn_vector",           # 벡터 유사도 검색용
+                            "dimension": vec_dim,
+                            "method": {
+                                "name": "hnsw",             # Hierarchical Navigable Small World
+                                "space_type": "cosinesimil", # 코사인 유사도 사용
+                                "engine": "lucene"          # 검색 엔진 (nmslib deprecated)
+                            }
+                        }
                     }
                 }
             }
@@ -262,11 +295,12 @@ def interactive_menu(client: PharmSearchClient):
         print("6. 인덱스 관리")
         print("7. 문서 관리")
         print("8. 인덱스 통계")
-        print("9. 전체 시나리오 실행")
+        print("9. 매핑 예제 조회")
+        print("10. 전체 시나리오 실행")
         print("0. 종료")
         print(f"{'='*60}")
         
-        choice = input("메뉴를 선택하세요 (0-9): ").strip()
+        choice = input("메뉴를 선택하세요 (0-10): ").strip()
         
         try:
             if choice == "0":
@@ -316,19 +350,38 @@ def interactive_menu(client: PharmSearchClient):
                         
                         if mapping_choice == "1":
                             # 예제에서 선택
-                            examples = get_mapping_examples()
-                            print("\n📋 매핑 예제:")
-                            for key, example in examples.items():
-                                print(f"{key}. {example['name']}")
+                            print("\n📋 매핑 예제 소스 선택:")
+                            print("1. 로컬 예제 (play.py)")
+                            print("2. API 예제 (서버)")
+                            source_choice = input("소스를 선택하세요 (1-2): ").strip()
                             
-                            example_choice = input("예제를 선택하세요: ").strip()
-                            if example_choice in examples:
-                                final_mapping = examples[example_choice]["mapping"]
-                                print(f"✅ '{examples[example_choice]['name']}' 선택됨")
-                                print("📋 선택된 매핑:")
-                                print(json.dumps(final_mapping, ensure_ascii=False, indent=2))
-                            else:
-                                print("❌ 잘못된 선택입니다.")
+                            examples = None
+                            if source_choice == "1":
+                                examples = get_mapping_examples()
+                            elif source_choice == "2":
+                                api_response = client.get_mapping_examples_from_api()
+                                if api_response.get("success") and "examples" in api_response:
+                                    examples = api_response["examples"]
+                                    print(f"✅ API에서 {api_response.get('total_examples', 0)}개 예제 로드됨")
+                                    print(f"📐 벡터 차원: {api_response.get('vector_dimension', 'N/A')}")
+                                else:
+                                    print("❌ API에서 예제를 가져올 수 없습니다.")
+                            
+                            if examples:
+                                print("\n📋 매핑 예제:")
+                                for key, example in examples.items():
+                                    print(f"{key}. {example['name']}")
+                                    if 'description' in example:
+                                        print(f"   - {example['description']}")
+                                
+                                example_choice = input("예제를 선택하세요: ").strip()
+                                if example_choice in examples:
+                                    final_mapping = examples[example_choice]["mapping"]
+                                    print(f"✅ '{examples[example_choice]['name']}' 선택됨")
+                                    print("📋 선택된 매핑:")
+                                    print(json.dumps(final_mapping, ensure_ascii=False, indent=2))
+                                else:
+                                    print("❌ 잘못된 선택입니다.")
                         
                         elif mapping_choice == "2":
                             # 직접 JSON 입력

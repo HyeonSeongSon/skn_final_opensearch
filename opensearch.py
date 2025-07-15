@@ -299,7 +299,7 @@ class OpenSearchClient:
         
         return reranked_results
 
-    def normalized_hybrid_search(self, keywords, query_text, top_k=5, bm25_weight=0.3, vector_weight=0.7, use_rerank=True, rerank_top_k=3):
+    def normalized_hybrid_search(self, keywords, query_text, index_name="internal_regulations_index", top_k=5, bm25_weight=0.3, vector_weight=0.7, use_rerank=True, rerank_top_k=3):
         """
         정규화된 하이브리드 서치 (0~1 점수 범위, Min-Max 정규화 사용)
         
@@ -324,12 +324,24 @@ class OpenSearchClient:
         if isinstance(keywords, list):
             keyword_queries = []
             for keyword in keywords:
+                # 기본 multi_match 검색
                 keyword_queries.append({
                     "multi_match": {
                         "query": keyword,
                         "fields": ["문서내용^2", "문서명^1.5", "장^1.2", "조^1.0"],
                         "type": "best_fields",
                         "fuzziness": "AUTO"
+                    }
+                })
+                # 한국어를 위한 wildcard 검색 추가
+                keyword_queries.append({
+                    "bool": {
+                        "should": [
+                            {"wildcard": {"문서내용": f"*{keyword}*"}},
+                            {"wildcard": {"문서명": f"*{keyword}*"}},
+                            {"wildcard": {"장": f"*{keyword}*"}},
+                            {"wildcard": {"조": f"*{keyword}*"}}
+                        ]
                     }
                 })
             
@@ -346,11 +358,29 @@ class OpenSearchClient:
         else:
             bm25_query = {
                 "query": {
-                    "multi_match": {
-                        "query": keywords,
-                        "fields": ["문서내용^2", "문서명^1.5", "장^1.2", "조^1.0"],
-                        "type": "best_fields",
-                        "fuzziness": "AUTO"
+                    "bool": {
+                        "should": [
+                            # 기본 multi_match 검색
+                            {
+                                "multi_match": {
+                                    "query": keywords,
+                                    "fields": ["문서내용^2", "문서명^1.5", "장^1.2", "조^1.0"],
+                                    "type": "best_fields",
+                                    "fuzziness": "AUTO"
+                                }
+                            },
+                            # 한국어를 위한 wildcard 검색 추가
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"wildcard": {"문서내용": f"*{keywords}*"}},
+                                        {"wildcard": {"문서명": f"*{keywords}*"}},
+                                        {"wildcard": {"장": f"*{keywords}*"}},
+                                        {"wildcard": {"조": f"*{keywords}*"}}
+                                    ]
+                                }
+                            }
+                        ]
                     }
                 },
                 "size": 10,  # BM25로 10개 문서 추출
@@ -375,11 +405,11 @@ class OpenSearchClient:
         
         try:
             # BM25 검색 실행
-            bm25_results = self.search_document("internal_regulations_index", bm25_query)
+            bm25_results = self.search_document(index_name, bm25_query)
             print(f"BM25 검색 결과: {len(bm25_results)}개")
             
             # Vector 검색 실행
-            vector_results = self.search_document("internal_regulations_index", vector_query)
+            vector_results = self.search_document(index_name, vector_query)
             print(f"Vector 검색 결과: {len(vector_results)}개")
             
             # 벡터 검색 디버깅
