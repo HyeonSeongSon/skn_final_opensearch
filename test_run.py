@@ -238,7 +238,7 @@ class PharmSearchAPIExample:
                     "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
                     "content_vector": {
                         "type": "knn_vector",           # 벡터 유사도 검색용
-                        "dimension": 1024,              # KURE-v1 모델 차원
+                        "dimension": 1024,              # 임베딩 모델 차원
                         "method": {
                             "name": "hnsw",             # Hierarchical Navigable Small World
                             "space_type": "cosinesimil", # 코사인 유사도 사용

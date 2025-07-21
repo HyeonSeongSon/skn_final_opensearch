@@ -2,8 +2,10 @@ from opensearchpy import OpenSearch, exceptions, helpers
 from sentence_transformers import SentenceTransformer
 from FlagEmbedding import FlagReranker
 from dotenv import load_dotenv
-import numpy as np
 from typing import List, Dict, Any, Union
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+import numpy as np
 import logging
 import json
 import os
@@ -52,6 +54,31 @@ class OpenSearchClient:
         # 임베딩 및 리랭크 모델 초기화
         self.model = self.embeddings_model()
         self.reranker = self.rerank_model()
+        self.llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+        self.keyword_prompt = {
+            "prompts": {
+                "keyword_extraction": """
+                당신은 반드시 키워드를 추출하는 챗봇입니다.
+                사용자의 질문에서 키워드를 반드시 추출하세요.
+
+                "{user_question}"
+
+                아래 조건을 만족해서 출력하세요.
+
+                1. 키워드는 리스트 형태로 반드시 출력
+
+                2. 문자열은 큰따옴표로 감싸서 출력하세요.
+
+                3. 리스트외에는 아무것도 출력하지 마세요.
+
+                4. 키워드는 최대 5개까지 추출하세요.
+
+                5. 복합어는 분해해서 의미 있는 단어 단위로 나눠줘
+
+                예를 들어 '임직원 교육기간'이라면 '임직원', '교육', '기간'처럼 나눠줘.
+                """
+            }
+        }
 
     def rerank_model(self):
         """
@@ -62,7 +89,7 @@ class OpenSearchClient:
             reranker: BGE Reranker 모델
         """
         print("BGE Reranker 모델 로드 중...")
-        reranker = FlagReranker('BAAI/bge-reranker-base', use_fp16=True)
+        reranker = FlagReranker('dragonkue/bge-reranker-v2-m3-ko', use_fp16=True)
         print("BGE Reranker 모델 로드 완료")
         return reranker
 
@@ -78,6 +105,13 @@ class OpenSearchClient:
         vec_dim = len(model.encode("dummy_text"))
         print(f"모델 차원: {vec_dim}")
         return model
+    
+    def get_keyword(self, user_input):
+        keyword_template = self.keyword_prompt.get("prompts", {}).get("keyword_extraction", "")
+        template = ChatPromptTemplate.from_template(keyword_template)
+        messages = template.format_messages(user_question=user_input)
+        response = self.llm.invoke(messages)
+        return response.content
 
     def delete_index(self, index_name: str) -> None:
         """
@@ -510,5 +544,3 @@ class OpenSearchClient:
         except Exception as e:
             print(f"정규화된 하이브리드 서치 오류: {e}")
             return []
-
-        

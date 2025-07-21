@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
 # FastAPI 애플리케이션 생성
 app = FastAPI(
     title="제약회사 문서 검색 시스템 API",
-    description="OpenSearch와 BGE Reranker를 사용한 하이브리드 검색 시스템 (run.py 기반)",
+    description="OpenSearch와 bge-reranker-v2-m3-ko를 사용한 하이브리드 검색 시스템 (run.py 기반)",
     version="2.0.0",
     lifespan=lifespan
 )
