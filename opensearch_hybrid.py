@@ -316,6 +316,107 @@ class OpenSearchHybridClient:
             print(f"❌ Search pipeline 삭제 실패: {e}")
             return False
     
+    def get_mapping_examples(self):
+        """
+        제약회사 문서 검색 시스템에 최적화된 매핑 예제들을 반환합니다.
+        인덱스 생성 시 참고할 수 있는 3가지 매핑 예제를 제공합니다.
+        """
+        vec_dim = 1024  # 벡터 차원 설정
+        
+        examples = {
+            "1": {
+                "name": "제약회사 문서 기본 매핑 (벡터 검색 없음)",
+                "description": "벡터 검색 없이 기본적인 텍스트 검색만 지원하는 매핑",
+                "mapping": {
+                    "settings": {
+                        "index": {
+                            "knn": False  # k-NN 검색 비활성화
+                        }
+                    },
+                    "mappings": {
+                        "properties": {
+                            "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                            "장":      { "type": "text" },      # 전문 검색 가능
+                            "조":      { "type": "text" },      # 전문 검색 가능
+                            "문서내용":  { "type": "text" },      # 전문 검색 가능
+                            "출처파일":  { "type": "keyword" }    # 정확한 파일명 매칭
+                        }
+                    }
+                }
+            },
+            "2": {
+                "name": "제약회사 문서 벡터 검색 지원 매핑 (권장)",
+                "description": "하이브리드 검색(BM25 + 벡터)을 지원하는 권장 매핑",
+                "mapping": {
+                    "settings": {
+                        "index": {
+                            "knn": True  # k-NN 검색 활성화
+                        }
+                    },
+                    "mappings": {
+                        "properties": {
+                            "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                            "장":      { "type": "text" },      # 전문 검색 가능
+                            "조":      { "type": "text" },      # 전문 검색 가능
+                            "문서내용":  { "type": "text" },      # 전문 검색 가능
+                            "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
+                            "content_vector": {
+                                "type": "knn_vector",           # 벡터 유사도 검색용
+                                "dimension": vec_dim,
+                                "method": {
+                                    "name": "hnsw",             # Hierarchical Navigable Small World
+                                    "space_type": "cosinesimil", # 코사인 유사도 사용
+                                    "engine": "lucene"          # 검색 엔진 (nmslib deprecated)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "3": {
+                "name": "제약회사 문서 완전 매핑 (추가 필드 포함)",
+                "description": "벡터 검색 + 추가 메타데이터 필드를 포함한 완전한 매핑",
+                "mapping": {
+                    "settings": {
+                        "index": {
+                            "knn": True  # k-NN 검색 활성화
+                        }
+                    },
+                    "mappings": {
+                        "properties": {
+                            "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                            "장":      { "type": "text" },      # 전문 검색 가능
+                            "조":      { "type": "text" },      # 전문 검색 가능
+                            "문서내용":  { "type": "text" },      # 전문 검색 가능
+                            "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
+                            "카테고리":  { "type": "keyword" },   # 문서 분류
+                            "생성일시":  { "type": "date" },      # 문서 생성 일시
+                            "수정일시":  { "type": "date" },      # 문서 수정 일시
+                            "태그":     { "type": "keyword" },   # 문서 태그
+                            "content_vector": {
+                                "type": "knn_vector",           # 벡터 유사도 검색용
+                                "dimension": vec_dim,
+                                "method": {
+                                    "name": "hnsw",             # Hierarchical Navigable Small World
+                                    "space_type": "cosinesimil", # 코사인 유사도 사용
+                                    "engine": "lucene"          # 검색 엔진 (nmslib deprecated)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return {
+            "success": True,
+            "message": "매핑 예제들이 성공적으로 조회되었습니다.",
+            "vector_dimension": vec_dim,
+            "total_examples": len(examples),
+            "examples": examples,
+            "usage_tip": "인덱스 생성 시 'mapping' 필드에 이 예제들을 사용하세요. 2번 예제가 권장됩니다."
+        }
+    
     def search_with_pipeline(self, 
                            query_text: str,
                            keywords: Union[str, List[str]] = None, 
@@ -441,59 +542,59 @@ class OpenSearchHybridClient:
             return []
 
 
-if __name__ == "__main__":
-    # OpenSearch Hybrid Client 초기화
-    client = OpenSearchHybridClient()
+# if __name__ == "__main__":
+#     # OpenSearch Hybrid Client 초기화
+#     client = OpenSearchHybridClient()
     
-    # 사용할 인덱스와 파이프라인 ID 설정
-    index_name = "pharma_test_index"  # 실제 인덱스명으로 변경
-    pipeline_id = "hybrid-minmax-pipeline"
+#     # 사용할 인덱스와 파이프라인 ID 설정
+#     index_name = "pharma_test_index"  # 실제 인덱스명으로 변경
+#     pipeline_id = "hybrid-minmax-pipeline"
     
-    print("=== OpenSearch 3.0+ Search Pipeline 하이브리드 검색 테스트 ===\n")
+#     print("=== OpenSearch 3.0+ Search Pipeline 하이브리드 검색 테스트 ===\n")
     
-    # 1. Search Pipeline 생성
-    print("1️⃣ Search Pipeline 생성 중...")
-    pipeline_created = client.create_search_pipeline(pipeline_id)
+#     # 1. Search Pipeline 생성
+#     print("1️⃣ Search Pipeline 생성 중...")
+#     pipeline_created = client.create_search_pipeline(pipeline_id)
     
-    if pipeline_created:
-        # 2. 생성된 Pipeline 확인
-        print("\n2️⃣ 생성된 Search Pipeline 확인...")
-        client.get_search_pipeline(pipeline_id)
+#     if pipeline_created:
+#         # 2. 생성된 Pipeline 확인
+#         print("\n2️⃣ 생성된 Search Pipeline 확인...")
+#         client.get_search_pipeline(pipeline_id)
         
-        # 3. Search Pipeline을 사용한 하이브리드 검색 실행
-        print("\n3️⃣ Search Pipeline 기반 하이브리드 검색 실행...")
+#         # 3. Search Pipeline을 사용한 하이브리드 검색 실행
+#         print("\n3️⃣ Search Pipeline 기반 하이브리드 검색 실행...")
         
-        # 테스트 쿼리들
-        test_queries = [
-            {
-                "query_text": "임직원 교육기간이 어떻게 돼?",
-                "keywords": ["임직원", "교육", "기간"]
-            },
-            {
-                "query_text": "회사 규정에 대해 알려줘",
-                "keywords": ["회사", "규정"]
-            }
-        ]
+#         # 테스트 쿼리들
+#         test_queries = [
+#             {
+#                 "query_text": "임직원 교육기간이 어떻게 돼?",
+#                 "keywords": ["임직원", "교육", "기간"]
+#             },
+#             {
+#                 "query_text": "회사 규정에 대해 알려줘",
+#                 "keywords": ["회사", "규정"]
+#             }
+#         ]
         
-        for i, test_query in enumerate(test_queries, 1):
-            print(f"\n📋 테스트 쿼리 {i}: {test_query['query_text']}")
+#         for i, test_query in enumerate(test_queries, 1):
+#             print(f"\n📋 테스트 쿼리 {i}: {test_query['query_text']}")
             
-            # Search Pipeline 기반 검색 (리랭크 포함)
-            final_results = client.search_with_pipeline(
-                query_text=test_query["query_text"],
-                keywords=test_query["keywords"],
-                pipeline_id=pipeline_id,
-                index_name=index_name,
-                top_k=5,
-                use_rerank=True,
-                rerank_top_k=3
-            )
+#             # Search Pipeline 기반 검색 (리랭크 포함)
+#             final_results = client.search_with_pipeline(
+#                 query_text=test_query["query_text"],
+#                 keywords=test_query["keywords"],
+#                 pipeline_id=pipeline_id,
+#                 index_name=index_name,
+#                 top_k=5,
+#                 use_rerank=True,
+#                 rerank_top_k=3
+#             )
             
-            print(f"🎯 최종 결과: {len(final_results)}개 문서 반환")
-            print("-" * 80)
+#             print(f"🎯 최종 결과: {len(final_results)}개 문서 반환")
+#             print("-" * 80)
             
-    else:
-        print("❌ Search Pipeline 생성에 실패했습니다.")
-        print("OpenSearch 버전을 확인하고 search pipeline 기능이 지원되는지 확인해주세요.")
+#     else:
+#         print("❌ Search Pipeline 생성에 실패했습니다.")
+#         print("OpenSearch 버전을 확인하고 search pipeline 기능이 지원되는지 확인해주세요.")
     
-    print("\n=== 테스트 완료 ===")
+#     print("\n=== 테스트 완료 ===")

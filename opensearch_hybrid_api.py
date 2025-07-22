@@ -64,6 +64,9 @@ class PipelineRequest(BaseModel):
 class JSONLLoadRequest(BaseModel):
     file_path: str
 
+class JSONLPatternLoadRequest(BaseModel):
+    jsonl_pattern: str = "data/*.jsonl"
+
 class RerankRequest(BaseModel):
     query_text: str
     documents: List[dict]
@@ -125,16 +128,59 @@ async def extract_keywords(request: KeywordExtractionRequest):
         if not client:
             raise HTTPException(status_code=500, detail="OpenSearch 클라이언트가 초기화되지 않았습니다.")
         
-        keywords = client.get_keyword(request.user_input)
+        # LLM에서 키워드 추출
+        raw_keywords = client.get_keyword(request.user_input)
+        
+        # 키워드 파싱 및 정리
+        parsed_keywords = parse_keywords(raw_keywords)
         
         return StandardResponse(
             success=True,
             message="키워드 추출이 성공적으로 완료되었습니다.",
-            data={"keywords": keywords}
+            data={"keywords": parsed_keywords, "raw_response": raw_keywords}
         )
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"키워드 추출 중 오류 발생: {str(e)}")
+
+def parse_keywords(keywords_str: str) -> list:
+    """LLM 응답에서 키워드 리스트 파싱"""
+    import re
+    import ast
+    
+    if not keywords_str:
+        return []
+    
+    # 문자열 정리
+    cleaned = keywords_str.strip()
+    
+    try:
+        # 1. JSON/Python 리스트 형태인 경우
+        if cleaned.startswith('[') and cleaned.endswith(']'):
+            # ast.literal_eval로 파싱 시도
+            try:
+                return ast.literal_eval(cleaned)
+            except:
+                # 정규표현식으로 따옴표 안의 문자열 추출
+                matches = re.findall(r'["\']([^"\']+)["\']', cleaned)
+                return matches if matches else []
+        
+        # 2. 따옴표로 둘러싸인 리스트 형태인 경우 ["키워드1", "키워드2"]
+        quotes_matches = re.findall(r'["\']([^"\']+)["\']', cleaned)
+        if quotes_matches:
+            return quotes_matches
+        
+        # 3. 쉼표로 구분된 경우
+        if ',' in cleaned:
+            keywords = [k.strip().strip('"\'') for k in cleaned.split(',')]
+            return [k for k in keywords if k]
+        
+        # 4. 단일 키워드인 경우
+        return [cleaned.strip('"\'')]
+        
+    except Exception:
+        # 파싱 실패시 기본 분할
+        return [k.strip().strip('"\'[]') for k in cleaned.replace('[', '').replace(']', '').split(',') if k.strip()]
 
 @app.post("/rerank", response_model=SearchResponse)
 async def rerank_documents(request: RerankRequest):
@@ -239,22 +285,35 @@ async def delete_index(index_name: str):
 
 @app.post("/index/document", response_model=StandardResponse)
 async def index_document(request: IndexRequest):
-    """단일 문서 색인"""
+    """단일 문서 임베딩 생성 및 색인"""
     try:
         if not client:
             raise HTTPException(status_code=500, detail="OpenSearch 클라이언트가 초기화되지 않았습니다.")
         
+        # 문서 복사본 생성 (원본 변경 방지)
+        document = request.document.copy()
+        
+        # 임베딩 생성 (벡터DB이므로 무조건 포함)
+        content = f"{document.get('문서명', '')} {document.get('장', '')} {document.get('조', '')} {document.get('문서내용', '')}"
+        
+        if hasattr(client, 'model') and client.model:
+            document['content_vector'] = client.model.encode(content).tolist()
+        
         result = client.index_document(
             index_name=request.index_name,
-            document=request.document,
+            document=document,
             refresh=request.refresh
         )
         
         if result:
             return StandardResponse(
                 success=True,
-                message="문서가 성공적으로 색인되었습니다.",
-                data=result
+                message="문서가 임베딩과 함께 성공적으로 색인되었습니다.",
+                data={
+                    "document_id": result.get("_id"),
+                    "vector_dimension": len(document.get('content_vector', [])),
+                    "has_embedding": 'content_vector' in document
+                }
             )
         else:
             raise HTTPException(status_code=500, detail="문서 색인에 실패했습니다.")
@@ -264,21 +323,43 @@ async def index_document(request: IndexRequest):
 
 @app.post("/index/bulk", response_model=StandardResponse)
 async def bulk_index_documents(request: BulkIndexRequest):
-    """여러 문서 일괄 색인"""
+    """여러 문서 임베딩 생성 및 일괄 색인"""
     try:
         if not client:
             raise HTTPException(status_code=500, detail="OpenSearch 클라이언트가 초기화되지 않았습니다.")
         
+        # 모든 문서에 임베딩 생성 (벡터DB이므로 무조건 포함)
+        documents_with_embeddings = []
+        embedded_count = 0
+        
+        for doc in request.documents:
+            # 문서 복사본 생성 (원본 변경 방지)
+            document = doc.copy()
+            
+            # 임베딩 생성
+            content = f"{document.get('문서명', '')} {document.get('장', '')} {document.get('조', '')} {document.get('문서내용', '')}"
+            
+            if hasattr(client, 'model') and client.model:
+                document['content_vector'] = client.model.encode(content).tolist()
+                embedded_count += 1
+            
+            documents_with_embeddings.append(document)
+        
         success = client.bulk_index_documents(
             index_name=request.index_name,
-            documents=request.documents,
+            documents=documents_with_embeddings,
             refresh=request.refresh
         )
         
         if success:
             return StandardResponse(
                 success=True,
-                message=f"{len(request.documents)}개 문서가 성공적으로 일괄 색인되었습니다."
+                message=f"{len(documents_with_embeddings)}개 문서가 임베딩과 함께 성공적으로 일괄 색인되었습니다.",
+                data={
+                    "total_documents": len(documents_with_embeddings),
+                    "embedded_documents": embedded_count,
+                    "vector_dimension": 1024 if embedded_count > 0 else 0
+                }
             )
         else:
             raise HTTPException(status_code=500, detail="일괄 색인에 실패했습니다.")
@@ -311,7 +392,7 @@ async def create_index_with_mapping(request: IndexMappingRequest):
 
 @app.post("/load-jsonl", response_model=StandardResponse)
 async def load_documents_from_jsonl(request: JSONLLoadRequest):
-    """JSONL 파일에서 문서 로드"""
+    """단일 JSONL 파일에서 문서 로드 (색인 없음)"""
     try:
         if not client:
             raise HTTPException(status_code=500, detail="OpenSearch 클라이언트가 초기화되지 않았습니다.")
@@ -326,6 +407,190 @@ async def load_documents_from_jsonl(request: JSONLLoadRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"JSONL 로드 중 오류 발생: {str(e)}")
+
+@app.post("/load-jsonl-pattern", response_model=StandardResponse)
+async def load_documents_from_jsonl_pattern(request: JSONLPatternLoadRequest):
+    """여러 JSONL 파일들에서 문서 로드 (색인 없음)"""
+    try:
+        if not client:
+            raise HTTPException(status_code=500, detail="OpenSearch 클라이언트가 초기화되지 않았습니다.")
+        
+        import glob
+        
+        # JSONL 파일 패턴으로 파일 목록 가져오기
+        jsonl_files = glob.glob(request.jsonl_pattern)
+        
+        if not jsonl_files:
+            raise HTTPException(status_code=404, detail=f"패턴 '{request.jsonl_pattern}'에 해당하는 JSONL 파일을 찾을 수 없습니다.")
+        
+        all_documents = []
+        
+        for jsonl_file in jsonl_files:
+            # JSONL 파일에서 문서 로드
+            documents = client.load_documents_from_jsonl(jsonl_file)
+            all_documents.extend(documents)
+        
+        return StandardResponse(
+            success=True,
+            message=f"{len(jsonl_files)}개 JSONL 파일에서 총 {len(all_documents)}개 문서를 성공적으로 로드했습니다.",
+            data={
+                "total_documents": len(all_documents),
+                "jsonl_files": jsonl_files,
+                "documents": all_documents
+            }
+        )
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"JSONL 패턴 로드 중 오류 발생: {str(e)}")
+
+@app.get("/mapping/examples", summary="매핑 예제 조회")
+async def get_mapping_examples():
+    """
+    제약회사 문서 검색 시스템에 최적화된 매핑 예제들을 반환합니다.
+    인덱스 생성 시 참고할 수 있는 3가지 매핑 예제를 제공합니다.
+    """
+    vec_dim = 1024  # 벡터 차원 설정
+    
+    examples = {
+        "1": {
+            "name": "제약회사 문서 기본 매핑 (벡터 검색 없음)",
+            "description": "벡터 검색 없이 기본적인 텍스트 검색만 지원하는 매핑",
+            "mapping": {
+                "settings": {
+                    "index": {
+                        "knn": False  # k-NN 검색 비활성화
+                    }
+                },
+                "mappings": {
+                    "properties": {
+                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                        "장":      { "type": "text" },      # 전문 검색 가능
+                        "조":      { "type": "text" },      # 전문 검색 가능
+                        "문서내용":  { "type": "text" },      # 전문 검색 가능
+                        "출처파일":  { "type": "keyword" }    # 정확한 파일명 매칭
+                    }
+                }
+            }
+        },
+        "2": {
+            "name": "제약회사 문서 벡터 검색 지원 매핑 (권장)",
+            "description": "하이브리드 검색(BM25 + 벡터)을 지원하는 권장 매핑",
+            "mapping": {
+                "settings": {
+                    "index": {
+                        "knn": True  # k-NN 검색 활성화
+                    }
+                },
+                "mappings": {
+                    "properties": {
+                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                        "장":      { "type": "text" },      # 전문 검색 가능
+                        "조":      { "type": "text" },      # 전문 검색 가능
+                        "문서내용":  { "type": "text" },      # 전문 검색 가능
+                        "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
+                        "content_vector": {
+                            "type": "knn_vector",           # 벡터 유사도 검색용
+                            "dimension": vec_dim,
+                            "method": {
+                                "name": "hnsw",             # Hierarchical Navigable Small World
+                                "space_type": "cosinesimil", # 코사인 유사도 사용
+                                "engine": "lucene"          # 검색 엔진 (nmslib deprecated)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "3": {
+            "name": "제약회사 문서 완전 매핑 (추가 필드 포함)",
+            "description": "벡터 검색 + 추가 메타데이터 필드를 포함한 완전한 매핑",
+            "mapping": {
+                "settings": {
+                    "index": {
+                        "knn": True  # k-NN 검색 활성화
+                    }
+                },
+                "mappings": {
+                    "properties": {
+                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
+                        "장":      { "type": "text" },      # 전문 검색 가능
+                        "조":      { "type": "text" },      # 전문 검색 가능
+                        "문서내용":  { "type": "text" },      # 전문 검색 가능
+                        "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
+                        "카테고리":  { "type": "keyword" },   # 문서 분류
+                        "생성일시":  { "type": "date" },      # 문서 생성 일시
+                        "수정일시":  { "type": "date" },      # 문서 수정 일시
+                        "태그":     { "type": "keyword" },   # 문서 태그
+                        "content_vector": {
+                            "type": "knn_vector",           # 벡터 유사도 검색용
+                            "dimension": vec_dim,
+                            "method": {
+                                "name": "hnsw",             # Hierarchical Navigable Small World
+                                "space_type": "cosinesimil", # 코사인 유사도 사용
+                                "engine": "lucene"          # 검색 엔진 (nmslib deprecated)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    return {
+        "success": True,
+        "message": "매핑 예제들이 성공적으로 조회되었습니다.",
+        "vector_dimension": vec_dim,
+        "total_examples": len(examples),
+        "examples": examples,
+        "usage_tip": "인덱스 생성 시 'mapping' 필드에 이 예제들을 사용하세요. 2번 예제가 권장됩니다."
+    }
+
+
+@app.get("/index/{index_name}/stats", response_model=StandardResponse)
+async def get_index_stats(index_name: str):
+    """인덱스 통계 정보 조회"""
+    try:
+        if not client:
+            raise HTTPException(status_code=500, detail="OpenSearch 클라이언트가 초기화되지 않았습니다.")
+        
+        # 인덱스 존재 확인
+        if not client.client.indices.exists(index=index_name):
+            raise HTTPException(status_code=404, detail=f"인덱스 '{index_name}'가 존재하지 않습니다.")
+        
+        # 인덱스 통계 조회
+        stats_response = client.client.indices.stats(index=index_name)
+        index_stats = stats_response['indices'][index_name]
+        
+        # 문서 수 조회
+        count_response = client.client.count(index=index_name)
+        total_documents = count_response['count']
+        
+        # 인덱스 매핑 정보 조회
+        mapping_response = client.client.indices.get_mapping(index=index_name)
+        mapping_info = mapping_response[index_name]['mappings']
+        
+        # 벡터 차원 정보 추출
+        vector_dimension = None
+        if 'properties' in mapping_info:
+            content_vector = mapping_info['properties'].get('content_vector', {})
+            if content_vector.get('type') == 'knn_vector':
+                vector_dimension = content_vector.get('dimension')
+        
+        return StandardResponse(
+            success=True,
+            message=f"인덱스 '{index_name}' 통계가 성공적으로 조회되었습니다.",
+            data={
+                "index_name": index_name,
+                "total_documents": total_documents,
+                "vector_dimension": vector_dimension,
+                "index_size_bytes": index_stats['total']['store']['size_in_bytes'],
+                "shard_count": index_stats['total']['segments']['count'],
+                "has_vector_field": vector_dimension is not None
+            }
+        )
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"인덱스 통계 조회 중 오류 발생: {str(e)}")
 
 @app.get("/health", response_model=dict)
 async def health_check():
