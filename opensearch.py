@@ -2,7 +2,7 @@ from opensearchpy import OpenSearch, exceptions, helpers
 from sentence_transformers import SentenceTransformer
 from FlagEmbedding import FlagReranker
 from dotenv import load_dotenv
-import numpy as np
+import numpy as np 
 import logging
 import json
 import os
@@ -73,7 +73,7 @@ class OpenSearchClient:
         Returns:
             model: 임베딩 모델
         """
-        model = SentenceTransformer("nlpai-lab/KURE-v1") 
+        model = SentenceTransformer("nlpai-lab/KURE-v1")
         vec_dim = len(model.encode("dummy_text"))
         print(f"모델 차원: {vec_dim}")
         return model
