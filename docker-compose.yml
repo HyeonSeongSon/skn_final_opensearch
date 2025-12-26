@@ -113,12 +113,12 @@ services:
     command: >
       bash -c "
         pip install -r requirements.txt &&
-        python opensearch_api.py
+        python opensearch_hybrid_api.py
       "
     volumes:
       - .:/app  # 현재 디렉토리를 /app으로 마운트
     ports:
-      - 8010:8010  # FastAPI가 8010포트에서 실행되므로 8010:8010 매핑
+      - 8010:8010
     environment:
       - OPENSEARCH_HOST=opensearch-node1  # docker-compose 내부에서는 서비스명 사용
       - OPENSEARCH_PORT=9200

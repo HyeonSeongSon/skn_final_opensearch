@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(python add_product_id.py:*)",
+      "Bash(python extract_fields.py:*)"
+    ]
+  }
+}

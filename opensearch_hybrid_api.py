@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Any, Union, Optional
+from typing import List, Dict, Any, Optional
 import json
 import logging
 from opensearch_hybrid import OpenSearchHybridClient
@@ -34,15 +34,9 @@ async def startup_event():
 # Pydantic 모델 정의
 class SearchRequest(BaseModel):
     query_text: str
-    keywords: Optional[Union[str, List[str]]] = None
     pipeline_id: str = "hybrid-minmax-pipeline"
     index_name: str = "pharma_test_index"
     top_k: int = 10
-    use_rerank: bool = True
-    rerank_top_k: int = 3
-
-class KeywordExtractionRequest(BaseModel):
-    user_input: str
 
 class IndexRequest(BaseModel):
     index_name: str
@@ -66,11 +60,6 @@ class JSONLLoadRequest(BaseModel):
 
 class JSONLPatternLoadRequest(BaseModel):
     jsonl_pattern: str = "data/*.jsonl"
-
-class RerankRequest(BaseModel):
-    query_text: str
-    documents: List[dict]
-    top_k: int = 3
 
 class SearchResponse(BaseModel):
     success: bool
@@ -100,110 +89,23 @@ async def search_with_pipeline(request: SearchRequest):
     try:
         if not client:
             raise HTTPException(status_code=500, detail="OpenSearch 클라이언트가 초기화되지 않았습니다.")
-        
+
         results = client.search_with_pipeline(
             query_text=request.query_text,
-            keywords=request.keywords,
             pipeline_id=request.pipeline_id,
             index_name=request.index_name,
-            top_k=request.top_k,
-            use_rerank=request.use_rerank,
-            rerank_top_k=request.rerank_top_k
+            top_k=request.top_k
         )
-        
+
         return SearchResponse(
             success=True,
             results=results,
             total_count=len(results),
             message="검색이 성공적으로 완료되었습니다."
         )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"검색 중 오류 발생: {str(e)}")
-
-@app.post("/extract-keywords", response_model=StandardResponse)
-async def extract_keywords(request: KeywordExtractionRequest):
-    """LLM을 사용한 키워드 추출"""
-    try:
-        if not client:
-            raise HTTPException(status_code=500, detail="OpenSearch 클라이언트가 초기화되지 않았습니다.")
-        
-        # LLM에서 키워드 추출
-        raw_keywords = client.get_keyword(request.user_input)
-        
-        # 키워드 파싱 및 정리
-        parsed_keywords = parse_keywords(raw_keywords)
-        
-        return StandardResponse(
-            success=True,
-            message="키워드 추출이 성공적으로 완료되었습니다.",
-            data={"keywords": parsed_keywords, "raw_response": raw_keywords}
-        )
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"키워드 추출 중 오류 발생: {str(e)}")
-
-def parse_keywords(keywords_str: str) -> list:
-    """LLM 응답에서 키워드 리스트 파싱"""
-    import re
-    import ast
-    
-    if not keywords_str:
-        return []
-    
-    # 문자열 정리
-    cleaned = keywords_str.strip()
-    
-    try:
-        # 1. JSON/Python 리스트 형태인 경우
-        if cleaned.startswith('[') and cleaned.endswith(']'):
-            # ast.literal_eval로 파싱 시도
-            try:
-                return ast.literal_eval(cleaned)
-            except:
-                # 정규표현식으로 따옴표 안의 문자열 추출
-                matches = re.findall(r'["\']([^"\']+)["\']', cleaned)
-                return matches if matches else []
-        
-        # 2. 따옴표로 둘러싸인 리스트 형태인 경우 ["키워드1", "키워드2"]
-        quotes_matches = re.findall(r'["\']([^"\']+)["\']', cleaned)
-        if quotes_matches:
-            return quotes_matches
-        
-        # 3. 쉼표로 구분된 경우
-        if ',' in cleaned:
-            keywords = [k.strip().strip('"\'') for k in cleaned.split(',')]
-            return [k for k in keywords if k]
-        
-        # 4. 단일 키워드인 경우
-        return [cleaned.strip('"\'')]
-        
-    except Exception:
-        # 파싱 실패시 기본 분할
-        return [k.strip().strip('"\'[]') for k in cleaned.replace('[', '').replace(']', '').split(',') if k.strip()]
-
-@app.post("/rerank", response_model=SearchResponse)
-async def rerank_documents(request: RerankRequest):
-    """BGE Reranker를 사용한 문서 리랭킹"""
-    try:
-        if not client:
-            raise HTTPException(status_code=500, detail="OpenSearch 클라이언트가 초기화되지 않았습니다.")
-        
-        results = client.rerank_documents(
-            query_text=request.query_text,
-            documents=request.documents,
-            top_k=request.top_k
-        )
-        
-        return SearchResponse(
-            success=True,
-            results=results,
-            total_count=len(results),
-            message="리랭킹이 성공적으로 완료되었습니다."
-        )
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"리랭킹 중 오류 발생: {str(e)}")
 
 @app.post("/pipeline/create", response_model=StandardResponse)
 async def create_search_pipeline(request: PipelineRequest):
@@ -443,109 +345,6 @@ async def load_documents_from_jsonl_pattern(request: JSONLPatternLoadRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"JSONL 패턴 로드 중 오류 발생: {str(e)}")
 
-@app.get("/mapping/examples", summary="매핑 예제 조회")
-async def get_mapping_examples():
-    """
-    제약회사 문서 검색 시스템에 최적화된 매핑 예제들을 반환합니다.
-    인덱스 생성 시 참고할 수 있는 3가지 매핑 예제를 제공합니다.
-    """
-    vec_dim = 1024  # 벡터 차원 설정
-    
-    examples = {
-        "1": {
-            "name": "제약회사 문서 기본 매핑 (벡터 검색 없음)",
-            "description": "벡터 검색 없이 기본적인 텍스트 검색만 지원하는 매핑",
-            "mapping": {
-                "settings": {
-                    "index": {
-                        "knn": False  # k-NN 검색 비활성화
-                    }
-                },
-                "mappings": {
-                    "properties": {
-                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
-                        "장":      { "type": "text" },      # 전문 검색 가능
-                        "조":      { "type": "text" },      # 전문 검색 가능
-                        "문서내용":  { "type": "text" },      # 전문 검색 가능
-                        "출처파일":  { "type": "keyword" }    # 정확한 파일명 매칭
-                    }
-                }
-            }
-        },
-        "2": {
-            "name": "제약회사 문서 벡터 검색 지원 매핑 (권장)",
-            "description": "하이브리드 검색(BM25 + 벡터)을 지원하는 권장 매핑",
-            "mapping": {
-                "settings": {
-                    "index": {
-                        "knn": True  # k-NN 검색 활성화
-                    }
-                },
-                "mappings": {
-                    "properties": {
-                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
-                        "장":      { "type": "text" },      # 전문 검색 가능
-                        "조":      { "type": "text" },      # 전문 검색 가능
-                        "문서내용":  { "type": "text" },      # 전문 검색 가능
-                        "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
-                        "content_vector": {
-                            "type": "knn_vector",           # 벡터 유사도 검색용
-                            "dimension": vec_dim,
-                            "method": {
-                                "name": "hnsw",             # Hierarchical Navigable Small World
-                                "space_type": "cosinesimil", # 코사인 유사도 사용
-                                "engine": "lucene"          # 검색 엔진 (nmslib deprecated)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "3": {
-            "name": "제약회사 문서 완전 매핑 (추가 필드 포함)",
-            "description": "벡터 검색 + 추가 메타데이터 필드를 포함한 완전한 매핑",
-            "mapping": {
-                "settings": {
-                    "index": {
-                        "knn": True  # k-NN 검색 활성화
-                    }
-                },
-                "mappings": {
-                    "properties": {
-                        "문서명":    { "type": "keyword" },  # 정확한 문서명 매칭
-                        "장":      { "type": "text" },      # 전문 검색 가능
-                        "조":      { "type": "text" },      # 전문 검색 가능
-                        "문서내용":  { "type": "text" },      # 전문 검색 가능
-                        "출처파일":  { "type": "keyword" },   # 정확한 파일명 매칭
-                        "카테고리":  { "type": "keyword" },   # 문서 분류
-                        "생성일시":  { "type": "date" },      # 문서 생성 일시
-                        "수정일시":  { "type": "date" },      # 문서 수정 일시
-                        "태그":     { "type": "keyword" },   # 문서 태그
-                        "content_vector": {
-                            "type": "knn_vector",           # 벡터 유사도 검색용
-                            "dimension": vec_dim,
-                            "method": {
-                                "name": "hnsw",             # Hierarchical Navigable Small World
-                                "space_type": "cosinesimil", # 코사인 유사도 사용
-                                "engine": "lucene"          # 검색 엔진 (nmslib deprecated)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    return {
-        "success": True,
-        "message": "매핑 예제들이 성공적으로 조회되었습니다.",
-        "vector_dimension": vec_dim,
-        "total_examples": len(examples),
-        "examples": examples,
-        "usage_tip": "인덱스 생성 시 'mapping' 필드에 이 예제들을 사용하세요. 2번 예제가 권장됩니다."
-    }
-
-
 @app.get("/index/{index_name}/stats", response_model=StandardResponse)
 async def get_index_stats(index_name: str):
     """인덱스 통계 정보 조회"""
@@ -609,4 +408,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8010)
