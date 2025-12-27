@@ -36,3 +36,4 @@ venv.bak/
 
 # IDE-specific files
 .vscode/
+.claude/

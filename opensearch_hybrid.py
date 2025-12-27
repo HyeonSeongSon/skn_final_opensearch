@@ -1,6 +1,7 @@
 from opensearchpy import OpenSearch, exceptions, helpers
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
+from typing import Optional, Dict
 import logging
 import json
 import os
@@ -44,9 +45,9 @@ class OpenSearchHybridClient:
             logging.error(f"OpenSearch 클라이언트 초기화 중 오류 발생: {e}")
             self.client = None
 
-        self.model = self.embeddings_model()
+        self.model = self._embeddings_model()
 
-    def embeddings_model(self):
+    def _embeddings_model(self):
         """
         임베딩 모델 초기화
         """
@@ -55,58 +56,25 @@ class OpenSearchHybridClient:
         print(f"모델 차원: {vec_dim}")
         return model
     
-    def load_documents_from_jsonl(self, file_path: str) -> list[dict]:
+    def create_index_with_mapping(self, index_name: str, mapping: dict) -> bool:
         """
-        JSONL 파일에서 문서들을 로드합니다.
-        """
-        documents = []
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                for line in file:
-                    line = line.strip()
-                    if line:
-                        doc = json.loads(line)
-                        documents.append(doc)
-            logging.info(f"'{file_path}'에서 {len(documents)}개 문서를 로드했습니다.")
-        except FileNotFoundError:
-            logging.error(f"파일을 찾을 수 없습니다: {file_path}")
-        except json.JSONDecodeError as e:
-            logging.error(f"JSON 파싱 오류: {e}")
-        except Exception as e:
-            logging.error(f"파일 로드 중 예상치 못한 오류 발생: {e}")
-        return documents
-
-    def delete_index(self, index_name: str) -> None:
-        """
-        인덱스를 삭제합니다.
+        지정한 매핑으로 인덱스를 생성합니다.
         """
         if not self.client:
-            logging.error("클라이언트가 초기화되지 않아 인덱스를 삭제할 수 없습니다.")
-            return
+            logging.error("클라이언트가 초기화되지 않아 인덱스를 생성할 수 없습니다.")
+            return False
         try:
-            if self.client.indices.exists(index=index_name):
-                self.client.indices.delete(index=index_name)
-                logging.info(f"'{index_name}' 인덱스를 삭제했습니다.")
-        except exceptions.OpenSearchException as e:
-            logging.error(f"인덱스 삭제 중 예상치 못한 오류 발생: {e}")
-    
-    def index_document(self, index_name: str, document: dict, refresh: bool = False) -> dict | None:
-        """
-        주어진 인덱스에 문서를 색인합니다.
-        """
-        if not self.client:
-            logging.error("클라이언트가 초기화되지 않아 문서를 색인할 수 없습니다.")
-            return None
-        try:
-            params = {"refresh": "true" if refresh else "false"}
-            response = self.client.index(index=index_name, body=document, params=params)
-            logging.info(f"'{index_name}' 인덱스에 문서 ID '{response['_id']}'로 색인되었습니다.")
-            return response
+            if not self.client.indices.exists(index=index_name):
+                self.client.indices.create(index=index_name, body=mapping)
+                logging.info(f"'{index_name}' 인덱스를 매핑과 함께 생성했습니다.")
+                return True
+            logging.info(f"'{index_name}' 인덱스가 이미 존재합니다.")
+            return True
         except exceptions.RequestError as e:
-            logging.error(f"문서 색인 중 오류 발생 (잘못된 요청): {e}")
+            logging.error(f"인덱스 생성 중 오류 발생 (잘못된 매핑): {e}")
         except exceptions.OpenSearchException as e:
-            logging.error(f"문서 색인 중 예상치 못한 오류 발생: {e}")
-        return None
+            logging.error(f"인덱스 생성 중 예상치 못한 오류 발생: {e}")
+        return False
 
     def bulk_index_documents(self, index_name: str, documents: list[dict], refresh: bool = False) -> bool:
         """
@@ -129,69 +97,26 @@ class OpenSearchHybridClient:
             logging.error(f"Bulk 색인 중 예상치 못한 오류 발생: {e}")
             return False
     
-    def search_document(self, index_name: str, query: dict) -> list[dict]:
+    def delete_index(self, index_name: str) -> None:
         """
-        주어진 쿼리로 인덱스에서 문서를 검색합니다.
-        """
-        if not self.client:
-            logging.error("클라이언트가 초기화되지 않아 문서를 검색할 수 없습니다.")
-            return []
-        try:
-            response = self.client.search(index=index_name, body=query)
-            hits = response["hits"]["hits"]
-            logging.info(f"'{index_name}' 인덱스에서 {len(hits)}개의 문서를 찾았습니다.")
-            return [{"score": hit["_score"], "source": hit["_source"]} for hit in hits]
-        except exceptions.NotFoundError:
-            logging.warning(f"검색 실패: '{index_name}' 인덱스가 존재하지 않습니다.")
-        except exceptions.RequestError as e:
-            logging.error(f"문서 검색 중 오류 발생 (잘못된 쿼리): {e}")
-        except exceptions.OpenSearchException as e:
-            logging.error(f"문서 검색 중 예상치 못한 오류 발생: {e}")
-        return []
-    
-    def create_index_with_mapping(self, index_name: str, mapping: dict) -> bool:
-        """
-        지정한 매핑으로 인덱스를 생성합니다.
+        인덱스를 삭제합니다.
         """
         if not self.client:
-            logging.error("클라이언트가 초기화되지 않아 인덱스를 생성할 수 없습니다.")
-            return False
+            logging.error("클라이언트가 초기화되지 않아 인덱스를 삭제할 수 없습니다.")
+            return
         try:
-            if not self.client.indices.exists(index=index_name):
-                self.client.indices.create(index=index_name, body=mapping)
-                logging.info(f"'{index_name}' 인덱스를 매핑과 함께 생성했습니다.")
-                return True
-            logging.info(f"'{index_name}' 인덱스가 이미 존재합니다.")
-            return True
-        except exceptions.RequestError as e:
-            logging.error(f"인덱스 생성 중 오류 발생 (잘못된 매핑): {e}")
+            if self.client.indices.exists(index=index_name):
+                self.client.indices.delete(index=index_name)
+                logging.info(f"'{index_name}' 인덱스를 삭제했습니다.")
         except exceptions.OpenSearchException as e:
-            logging.error(f"인덱스 생성 중 예상치 못한 오류 발생: {e}")
-        return False
+            logging.error(f"인덱스 삭제 중 예상치 못한 오류 발생: {e}")
 
-    def create_search_pipeline(self, pipeline_id: str = "hybrid-minmax-pipeline"):
+    def create_search_pipeline(self,
+                               pipeline_id: str = "hybrid-minmax-pipeline", 
+                               pipeline_body: Optional[Dict] = None):
         """
         OpenSearch 3.0+ 호환 하이브리드 검색용 search pipeline 생성
         """
-        pipeline_body = {
-            "description": "하이브리드 점수 정규화 및 결합 파이프라인",
-            "phase_results_processors": [
-                {
-                    "normalization-processor": {
-                        "normalization": { 
-                            "technique": "min_max" 
-                        },
-                        "combination": {
-                            "technique": "arithmetic_mean",
-                            "parameters": {
-                                "weights": [0.5, 0.5]
-                            }
-                        }
-                    }
-                }
-            ]
-        }
-
         try:
             # 파이프라인 생성 또는 업데이트
             response = self.client.transport.perform_request(
@@ -206,23 +131,7 @@ class OpenSearchHybridClient:
             print(f"❌ Search pipeline 생성 실패: {e}")
             logging.error(f"Search pipeline 생성 오류: {e}")
             return False
-
-    def get_search_pipeline(self, pipeline_id: str = "hybrid-minmax-pipeline"):
-        """
-        생성된 search pipeline 정보 조회
-        """
-        try:
-            response = self.client.transport.perform_request(
-                method="GET",
-                url=f"/_search/pipeline/{pipeline_id}"
-            )
-            print(f"📋 Search pipeline '{pipeline_id}' 정보:")
-            print(json.dumps(response, indent=2, ensure_ascii=False))
-            return response
-        except Exception as e:
-            print(f"❌ Search pipeline 조회 실패: {e}")
-            return None
-
+        
     def delete_search_pipeline(self, pipeline_id: str = "hybrid-minmax-pipeline"):
         """
         search pipeline 삭제
@@ -242,7 +151,8 @@ class OpenSearchHybridClient:
                            query_text: str,
                            pipeline_id: str = "hybrid-minmax-pipeline",
                            index_name: str = "pharma_test_index",
-                           top_k: int = 10):
+                           query_body: Optional[Dict] = None,
+                           top_k: int = 3):
         """
         Search pipeline을 사용한 하이브리드 검색
 
@@ -264,40 +174,8 @@ class OpenSearchHybridClient:
             query_vector = self.model.encode(query_text).tolist()
             print(f"생성된 벡터 차원: {len(query_vector)}")
 
-            # 하이브리드 쿼리 구성
-            query_body = {
-                "size": top_k,
-                "query": {
-                    "hybrid": {
-                        "queries": [
-                            {
-                                "multi_match": {
-                                    "query": query_text,
-                                    "fields": ["문서내용^2", "문서명^1.5", "장^1.2", "조^1.0"],
-                                    "type": "best_fields",
-                                    "fuzziness": "AUTO"
-                                }
-                            },
-                            {
-                                "knn": {
-                                    "content_vector": {
-                                        "vector": query_vector,
-                                        "k": top_k
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                "_source": {
-                    "excludes": ["content_vector"]
-                }
-            }
-
             # Search pipeline 파라미터 설정
             params = {"search_pipeline": pipeline_id}
-            
-            # print(f"실행 중인 쿼리: {json.dumps(query_body, indent=2, ensure_ascii=False)}")
 
             # 검색 실행
             response = self.client.search(index=index_name, body=query_body, params=params)
@@ -329,3 +207,24 @@ class OpenSearchHybridClient:
             print(f"❌ Search pipeline 검색 오류: {e}")
             logging.error(f"Search pipeline 검색 상세 오류: {e}")
             return []
+        
+    def _create_search_pipe_line_body(self):
+        pipeline_body = {
+            "description": "하이브리드 점수 정규화 및 결합 파이프라인",
+            "phase_results_processors": [
+                {
+                    "normalization-processor": {
+                        "normalization": { 
+                            "technique": "min_max" 
+                        },
+                        "combination": {
+                            "technique": "arithmetic_mean",
+                            "parameters": {
+                                "weights": [0.4, 0.6]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+        return pipeline_body

@@ -5,7 +5,10 @@
       "Bash(grep:*)",
       "Bash(ls:*)",
       "Bash(python add_product_id.py:*)",
-      "Bash(python extract_fields.py:*)"
+      "Bash(python extract_fields.py:*)",
+      "Bash(dir:*)",
+      "Bash(python clean_document.py:*)",
+      "Bash(python:*)"
     ]
   }
 }
