@@ -56,7 +56,23 @@ git clone <repository-url>
 cd skn_final_opensearch
 ```
 
-### 3. 환경 변수 설정
+### 3. Python 패키지 설치
+
+```bash
+# 가상환경 생성 (선택사항)
+python -m venv venv
+
+# 가상환경 활성화
+# Windows
+venv\Scripts\activate
+# Linux/Mac
+source venv/bin/activate
+
+# 필수 패키지 설치
+pip install -r requirements.txt
+```
+
+### 4. 환경 변수 설정
 
 **.env.example 파일을 참고하여 .env 파일 생성:**
 
@@ -84,7 +100,7 @@ ENVIRONMENT=local
 - `.env.production.example`을 참고하여 `.env.production` 파일 생성
 - 자세한 내용은 [DEPLOYMENT.md](DEPLOYMENT.md) 참조
 
-### 4. Docker Compose로 전체 시스템 실행
+### 5. Docker Compose로 전체 시스템 실행
 
 ```bash
 # 전체 시스템 시작 (OpenSearch + FastAPI)
@@ -97,7 +113,7 @@ docker compose logs -f
 docker compose ps
 ```
 
-### 5. 접속 확인
+### 6. 접속 확인
 
 - **OpenSearch**: http://localhost:9200
 - **OpenSearch Dashboards**: http://localhost:5601
