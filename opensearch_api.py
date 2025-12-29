@@ -65,8 +65,8 @@ class ProductResult(BaseModel):
     피부타입: Optional[str] = None
     고민키워드: Optional[str] = None
     전용제품: Optional[str] = None
-    퍼스널컬러: Optional[List[str]] = None  # 리스트로 변경
-    피부호수: Optional[str] = None
+    퍼스널컬러: Optional[List[str]] = None
+    피부호수: Optional[List[int]] = None
     문서: Optional[str] = None
 
 
