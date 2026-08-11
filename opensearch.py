@@ -2,6 +2,9 @@ from opensearchpy import OpenSearch, exceptions, helpers
 from sentence_transformers import SentenceTransformer
 from FlagEmbedding import FlagReranker
 from dotenv import load_dotenv
+from typing import List, Dict, Any, Union
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
 import numpy as np
 import logging
 import json
@@ -29,15 +32,15 @@ class OpenSearchClient:
             
             logging.info(f"OpenSearch 연결 시도 중... (비밀번호 길이: {len(password)})")
             
+            # 환경변수에서 호스트 정보 가져오기 (docker-compose 환경 지원)
+            host = os.getenv("OPENSEARCH_HOST", "localhost")
+            port = int(os.getenv("OPENSEARCH_PORT", "9200"))
+            
+            logging.info(f"OpenSearch 연결 대상: {host}:{port}")
+            
             self.client = OpenSearch(
-                # docker-compose.yml에 설정된 호스트 정보
-                hosts=[{"host": "localhost", "port": 9200}],
-                # .env 파일에서 불러온 비밀번호 사용
-                http_auth=("admin", password),
-                # 보안 플러그인이 활성화되어 있으므로 SSL/TLS 사용
-                use_ssl=True,
-                # 자체 서명된 인증서를 사용하므로 인증서 검증 비활성화
-                verify_certs=False,
+                hosts=[{"host": host, "port": port}],
+                # 보안이 비활성화되어 있으므로 인증 없이 연결
                 timeout=30, # 연결 타임아웃 설정
             )
             # 연결 확인
@@ -51,6 +54,31 @@ class OpenSearchClient:
         # 임베딩 및 리랭크 모델 초기화
         self.model = self.embeddings_model()
         self.reranker = self.rerank_model()
+        self.llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+        self.keyword_prompt = {
+            "prompts": {
+                "keyword_extraction": """
+                당신은 반드시 키워드를 추출하는 챗봇입니다.
+                사용자의 질문에서 키워드를 반드시 추출하세요.
+
+                "{user_question}"
+
+                아래 조건을 만족해서 출력하세요.
+
+                1. 키워드는 리스트 형태로 반드시 출력
+
+                2. 문자열은 큰따옴표로 감싸서 출력하세요.
+
+                3. 리스트외에는 아무것도 출력하지 마세요.
+
+                4. 키워드는 최대 5개까지 추출하세요.
+
+                5. 복합어는 분해해서 의미 있는 단어 단위로 나눠줘
+
+                예를 들어 '임직원 교육기간'이라면 '임직원', '교육', '기간'처럼 나눠줘.
+                """
+            }
+        }
 
     def rerank_model(self):
         """
@@ -61,7 +89,7 @@ class OpenSearchClient:
             reranker: BGE Reranker 모델
         """
         print("BGE Reranker 모델 로드 중...")
-        reranker = FlagReranker('BAAI/bge-reranker-base', use_fp16=True)
+        reranker = FlagReranker('dragonkue/bge-reranker-v2-m3-ko', use_fp16=True)
         print("BGE Reranker 모델 로드 완료")
         return reranker
 
@@ -77,6 +105,13 @@ class OpenSearchClient:
         vec_dim = len(model.encode("dummy_text"))
         print(f"모델 차원: {vec_dim}")
         return model
+    
+    def get_keyword(self, user_input):
+        keyword_template = self.keyword_prompt.get("prompts", {}).get("keyword_extraction", "")
+        template = ChatPromptTemplate.from_template(keyword_template)
+        messages = template.format_messages(user_question=user_input)
+        response = self.llm.invoke(messages)
+        return response.content
 
     def delete_index(self, index_name: str) -> None:
         """
@@ -298,7 +333,7 @@ class OpenSearchClient:
         
         return reranked_results
 
-    def normalized_hybrid_search(self, keywords, query_text, top_k=5, bm25_weight=0.3, vector_weight=0.7, use_rerank=True, rerank_top_k=3):
+    def normalized_hybrid_search(self, keywords, query_text, index_name="internal_regulations_index", top_k=5, bm25_weight=0.3, vector_weight=0.7, use_rerank=True, rerank_top_k=3):
         """
         정규화된 하이브리드 서치 (0~1 점수 범위, Min-Max 정규화 사용)
         
@@ -323,12 +358,24 @@ class OpenSearchClient:
         if isinstance(keywords, list):
             keyword_queries = []
             for keyword in keywords:
+                # 기본 multi_match 검색
                 keyword_queries.append({
                     "multi_match": {
                         "query": keyword,
                         "fields": ["문서내용^2", "문서명^1.5", "장^1.2", "조^1.0"],
                         "type": "best_fields",
                         "fuzziness": "AUTO"
+                    }
+                })
+                # 한국어를 위한 wildcard 검색 추가
+                keyword_queries.append({
+                    "bool": {
+                        "should": [
+                            {"wildcard": {"문서내용": f"*{keyword}*"}},
+                            {"wildcard": {"문서명": f"*{keyword}*"}},
+                            {"wildcard": {"장": f"*{keyword}*"}},
+                            {"wildcard": {"조": f"*{keyword}*"}}
+                        ]
                     }
                 })
             
@@ -345,11 +392,29 @@ class OpenSearchClient:
         else:
             bm25_query = {
                 "query": {
-                    "multi_match": {
-                        "query": keywords,
-                        "fields": ["문서내용^2", "문서명^1.5", "장^1.2", "조^1.0"],
-                        "type": "best_fields",
-                        "fuzziness": "AUTO"
+                    "bool": {
+                        "should": [
+                            # 기본 multi_match 검색
+                            {
+                                "multi_match": {
+                                    "query": keywords,
+                                    "fields": ["문서내용^2", "문서명^1.5", "장^1.2", "조^1.0"],
+                                    "type": "best_fields",
+                                    "fuzziness": "AUTO"
+                                }
+                            },
+                            # 한국어를 위한 wildcard 검색 추가
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"wildcard": {"문서내용": f"*{keywords}*"}},
+                                        {"wildcard": {"문서명": f"*{keywords}*"}},
+                                        {"wildcard": {"장": f"*{keywords}*"}},
+                                        {"wildcard": {"조": f"*{keywords}*"}}
+                                    ]
+                                }
+                            }
+                        ]
                     }
                 },
                 "size": 10,  # BM25로 10개 문서 추출
@@ -364,7 +429,7 @@ class OpenSearchClient:
             "query": {
                 "knn": {
                     "content_vector": {
-                        "vector": query_vector.tolist(),
+                        "vector": query_vector.tolist(),  # type: ignore
                         "k": 10
                     }
                 }
@@ -374,11 +439,11 @@ class OpenSearchClient:
         
         try:
             # BM25 검색 실행
-            bm25_results = self.search_document("internal_regulations_index", bm25_query)
+            bm25_results = self.search_document(index_name, bm25_query)
             print(f"BM25 검색 결과: {len(bm25_results)}개")
             
             # Vector 검색 실행
-            vector_results = self.search_document("internal_regulations_index", vector_query)
+            vector_results = self.search_document(index_name, vector_query)
             print(f"Vector 검색 결과: {len(vector_results)}개")
             
             # 벡터 검색 디버깅
@@ -479,5 +544,3 @@ class OpenSearchClient:
         except Exception as e:
             print(f"정규화된 하이브리드 서치 오류: {e}")
             return []
-
-        
