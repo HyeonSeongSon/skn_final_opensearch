@@ -202,8 +202,8 @@ class OpenSearchClient:
             response = self.client.search(index=index_name, body=query)
             hits = response["hits"]["hits"]
             logging.info(f"'{index_name}' 인덱스에서 {len(hits)}개의 문서를 찾았습니다.")
-            # _source 뿐만 아니라 검색 점수(_score)도 함께 반환
-            return [{"score": hit["_score"], "source": hit["_source"]} for hit in hits]
+            # _source 뿐만 아니라 검색 점수(_score)와 고유 id(_id)도 함께 반환
+            return [{"id": hit["_id"], "score": hit["_score"], "source": hit["_source"]} for hit in hits]
         except exceptions.NotFoundError:
             logging.warning(f"검색 실패: '{index_name}' 인덱스가 존재하지 않습니다.")
         except exceptions.RequestError as e:
@@ -386,7 +386,7 @@ class OpenSearchClient:
                         "minimum_should_match": 1
                     }
                 },
-                "size": 10,  # BM25로 10개 문서 추출
+                "size": top_k,  # BM25로 top_k개 문서 추출
                 "_source": {"excludes": ["content_vector"]}
             }
         else:
@@ -417,20 +417,20 @@ class OpenSearchClient:
                         ]
                     }
                 },
-                "size": 10,  # BM25로 10개 문서 추출
+                "size": top_k,  # BM25로 top_k개 문서 추출
                 "_source": {"excludes": ["content_vector"]}
             }
-        
+
         # 2. Vector 유사도 검색 (코사인 유사도 사용)
         query_vector = self.model.encode(query_text)
-        
+
         vector_query = {
-            "size": 10,  # 벡터 검색으로 10개 문서 추출
+            "size": top_k,  # 벡터 검색으로 top_k개 문서 추출
             "query": {
                 "knn": {
                     "content_vector": {
                         "vector": query_vector.tolist(),  # type: ignore
-                        "k": 10
+                        "k": top_k
                     }
                 }
             },
@@ -462,7 +462,7 @@ class OpenSearchClient:
                 normalized_bm25_scores = self.normalize_scores(bm25_scores)
                 
                 for i, result in enumerate(bm25_results):
-                    doc_id = (result['source'].get('문서명') or '') + (result['source'].get('장') or '') + (result['source'].get('조') or '')
+                    doc_id = result['id']
                     combined_results[doc_id] = {
                         'source': result['source'],
                         'bm25_score': normalized_bm25_scores[i],
@@ -476,7 +476,7 @@ class OpenSearchClient:
                 normalized_vector_scores = self.normalize_scores(vector_scores)
                 
                 for i, result in enumerate(vector_results):
-                    doc_id = (result['source'].get('문서명') or '') + (result['source'].get('장') or '') + (result['source'].get('조') or '')
+                    doc_id = result['id']
                     if doc_id in combined_results:
                         combined_results[doc_id]['vector_score'] = normalized_vector_scores[i]
                     else:

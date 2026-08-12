@@ -123,6 +123,7 @@ services:
       - OPENSEARCH_HOST=opensearch-node1  # docker-compose 내부에서는 서비스명 사용
       - OPENSEARCH_PORT=9200
       - OPENSEARCH_ADMIN_PASSWORD=${OPENSEARCH_ADMIN_PASSWORD}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     networks:
       - opensearch-net
     depends_on:
